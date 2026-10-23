@@ -19,16 +19,21 @@ export async function handleMessage(sock, m) {
     const jid = m.key.remoteJid;
     if (!jid || jid === 'status@broadcast') return;
 
-    // Nomor akun bot yang sedang login
-    const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-    const isSelf = jid === botJid;
-
-    // Abaikan jika pesan keluar ke orang lain (tetap proses jika kirim ke nomor sendiri / "Message Yourself")
-    if (m.key.fromMe && !isSelf) return;
-
-    // Filter: Hanya terima di personal chat (bukan grup) sesuai permintaan user
+    // Filter: Hanya terima di personal chat (bukan grup)
     const isGroup = jid.endsWith('@g.us');
     if (config.privateOnly && isGroup) {
+      return;
+    }
+
+    // Identifikasi akun bot & deteksi chat ke diri sendiri ("Message Yourself")
+    const botPhone = sock.user?.id ? sock.user.id.split(':')[0].replace(/[^0-9]/g, '') : '';
+    const botLid = sock.user?.lid ? sock.user.lid.split(':')[0].replace(/[^0-9]/g, '') : '';
+    const currentNum = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+
+    const isSelfChat = (botPhone && currentNum === botPhone) || (botLid && currentNum === botLid);
+
+    // Jika pesan terkirim dari kita sendiri (fromMe), hanya proses jika kita kirim ke diri sendiri (Message Yourself)
+    if (m.key.fromMe && !isSelfChat) {
       return;
     }
 
@@ -42,6 +47,8 @@ export async function handleMessage(sock, m) {
       '';
 
     if (!text || typeof text !== 'string') return;
+
+    console.log(`📩 [Pesan Masuk] Dari: ${jid} (fromMe: ${m.key.fromMe}, isSelf: ${isSelfChat}) | Teks: "${text.slice(0, 50)}"`);
 
     // Auto read tanda centang biru (opsional)
     if (config.autoRead) {
