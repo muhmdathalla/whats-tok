@@ -19,26 +19,30 @@ export async function handleMessage(sock, m) {
     const jid = m.key.remoteJid;
     if (!jid || jid === 'status@broadcast') return;
 
-    // Filter: Hanya terima di personal chat (bukan grup)
+    // Filter grup
     const isGroup = jid.endsWith('@g.us');
-    if (config.privateOnly && isGroup) {
-      return;
-    }
+    if (config.privateOnly && isGroup) return;
 
-    // Identifikasi akun bot & deteksi chat ke diri sendiri ("Message Yourself")
+    // Identifikasi akun & deteksi apakah ini chat ke diri sendiri ("Message Yourself" / kontak You)
     const botPhone = sock.user?.id ? sock.user.id.split(':')[0].replace(/[^0-9]/g, '') : '';
     const botLid = sock.user?.lid ? sock.user.lid.split(':')[0].replace(/[^0-9]/g, '') : '';
     const currentNum = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
 
     const isSelfChat = (botPhone && currentNum === botPhone) || (botLid && currentNum === botLid);
 
-    // Jika pesan terkirim dari kita sendiri (fromMe), hanya proses jika kita kirim ke diri sendiri (Message Yourself)
+    // KETENTUAN UTAMA:
+    // Jika onlySelf aktif (default: true), bot HANYA merespons chat di kontak You (diri sendiri).
+    // Jadi kalau kirim link ke orang lain, bot TIDAK akan pernah ikut campur/download!
+    if (config.onlySelf && !isSelfChat) {
+      return;
+    }
+
+    // Jika pesan terkirim dari kita sendiri (fromMe), hanya proses jika kita kirim ke diri sendiri
     if (m.key.fromMe && !isSelfChat) {
       return;
     }
 
     // Ekstrak teks pesan
-    const messageType = Object.keys(m.message)[0];
     const text =
       m.message.conversation ||
       m.message.extendedTextMessage?.text ||
@@ -48,33 +52,36 @@ export async function handleMessage(sock, m) {
 
     if (!text || typeof text !== 'string') return;
 
-    console.log(`📩 [Pesan Masuk] Dari: ${jid} (fromMe: ${m.key.fromMe}, isSelf: ${isSelfChat}) | Teks: "${text.slice(0, 50)}"`);
-
-    // Auto read tanda centang biru (opsional)
-    if (config.autoRead) {
-      await sock.readMessages([m.key]).catch(() => {});
-    }
-
     // Temukan semua URL dalam teks
     const urls = extractUrls(text);
     if (urls.length === 0) return;
 
+    console.log(`📩 [Link Terdeteksi di Kontak You]: "${urls[0]}"`);
+
+    // Tujuan pengiriman harus selalu format @s.whatsapp.net (bukan internal @lid iOS)
+    const targetJid = isSelfChat ? `${botPhone}@s.whatsapp.net` : (jid.endsWith('@lid') ? `${botPhone}@s.whatsapp.net` : jid);
+
+    // Auto read
+    if (config.autoRead) {
+      await sock.readMessages([m.key]).catch(() => {});
+    }
+
     for (const url of urls) {
       // 1. TIKTOK (Video & Photo Slides)
       if (TIKTOK_REGEX.test(url)) {
-        await handleTikTok(sock, jid, m, url);
+        await handleTikTok(sock, targetJid, url);
         break;
       }
 
       // 2. INSTAGRAM (Reels, Single Photo, Carousel Multi-photo)
       if (INSTAGRAM_REGEX.test(url)) {
-        await handleInstagram(sock, jid, m, url);
+        await handleInstagram(sock, targetJid, url);
         break;
       }
 
       // 3. YOUTUBE (Video & Shorts)
       if (YOUTUBE_REGEX.test(url)) {
-        await handleYouTube(sock, jid, m, url);
+        await handleYouTube(sock, targetJid, url);
         break;
       }
     }
@@ -84,28 +91,10 @@ export async function handleMessage(sock, m) {
 }
 
 /**
- * React emoji ke pesan
- */
-async function react(sock, m, emoji) {
-  try {
-    await sock.sendMessage(m.key.remoteJid, {
-      react: {
-        text: emoji,
-        key: m.key
-      }
-    });
-  } catch (e) {
-    // Abaikan jika react gagal
-  }
-}
-
-/**
  * Handler TikTok
  */
-async function handleTikTok(sock, jid, m, url) {
-  console.log(`[TikTok] Mendeteksi link: ${url}`);
-  await react(sock, m, '⏳');
-
+async function handleTikTok(sock, targetJid, url) {
+  console.log(`[TikTok] Mengunduh: ${url}`);
   try {
     const data = await downloadTikTok(url);
 
@@ -113,69 +102,63 @@ async function handleTikTok(sock, jid, m, url) {
     if (data.type === 'images' && Array.isArray(data.images) && data.images.length > 0) {
       const total = data.images.length;
 
-      // Jika hanya 1 foto
       if (total === 1) {
-        await sock.sendMessage(jid, {
+        await sock.sendMessage(targetJid, {
           image: { url: data.images[0] },
           caption: `📸 *TikTok Photo*\n👤 *Creator:* ${data.author}\n📝 *Caption:* ${data.title || '-'}`
-        }, { quoted: m });
+        });
       } else {
-        // Jika multiple foto (Slide) -> Langsung kirim semua foto ke chat
-        await sock.sendMessage(jid, {
-          text: `📸 *TikTok Slide Terdeteksi!* (${total} Foto)\n👤 *Creator:* ${data.author}\n📝 *Caption:* ${data.title || '-'}\n\n_Sedang mengirim semua foto satu per satu langsung ke chat..._`
-        }, { quoted: m });
+        await sock.sendMessage(targetJid, {
+          text: `📸 *TikTok Slide Terdeteksi!* (${total} Foto)\n👤 *Creator:* ${data.author}\n📝 *Caption:* ${data.title || '-'}\n\n_Sedang mengirim ${total} foto langsung ke chat..._`
+        });
 
         for (let i = 0; i < total; i++) {
-          await delay(1200); // jeda agar tidak spamming/banned oleh WA
-          await sock.sendMessage(jid, {
+          await delay(1200);
+          await sock.sendMessage(targetJid, {
             image: { url: data.images[i] },
             caption: `📸 Foto [${i + 1}/${total}]`
           });
         }
       }
 
-      // Opsional: Kirim audio/soundtrack TikTok jika ada
+      // Kirim audio/musik jika ada
       if (data.musicUrl) {
         await delay(1000);
-        await sock.sendMessage(jid, {
+        await sock.sendMessage(targetJid, {
           audio: { url: data.musicUrl },
           mimetype: 'audio/mp4',
           fileName: 'tiktok_audio.mp3'
         });
       }
 
-      await react(sock, m, '✅');
+      console.log(`[TikTok] Sukses mengirim ${total} media`);
       return;
     }
 
-    // KASUS 2: Postingan Video No-Watermark
+    // KASUS 2: Video No-Watermark
     if (data.type === 'video' && data.videoUrl) {
-      await sock.sendMessage(jid, {
+      await sock.sendMessage(targetJid, {
         video: { url: data.videoUrl },
         caption: `🎬 *TikTok Video (No Watermark)*\n👤 *Creator:* ${data.author}\n📝 *Title:* ${data.title || '-'}`
-      }, { quoted: m });
-
-      await react(sock, m, '✅');
+      });
+      console.log('[TikTok] Sukses mengirim video');
       return;
     }
 
     throw new Error('Format media TikTok tidak dikenali.');
   } catch (err) {
     console.error('[TikTok Error]:', err.message);
-    await react(sock, m, '❌');
-    await sock.sendMessage(jid, {
-      text: `❌ *Gagal mendownload TikTok:*\n${err.message}\n\nPastikan video bersifat publik.`
-    }, { quoted: m });
+    await sock.sendMessage(targetJid, {
+      text: `❌ *Gagal mendownload TikTok:*\n${err.message}`
+    });
   }
 }
 
 /**
  * Handler Instagram
  */
-async function handleInstagram(sock, jid, m, url) {
-  console.log(`[Instagram] Mendeteksi link: ${url}`);
-  await react(sock, m, '⏳');
-
+async function handleInstagram(sock, targetJid, url) {
+  console.log(`[Instagram] Mengunduh: ${url}`);
   try {
     const data = await downloadInstagram(url);
 
@@ -185,64 +168,60 @@ async function handleInstagram(sock, jid, m, url) {
 
     const total = data.items.length;
 
-    // KASUS 1: Hanya 1 Media (Single Photo atau 1 Video/Reels)
+    // 1 Media
     if (total === 1) {
       const item = data.items[0];
       if (item.type === 'video') {
-        await sock.sendMessage(jid, {
+        await sock.sendMessage(targetJid, {
           video: { url: item.url },
           caption: `🎬 *Instagram Video / Reels*\n📝 *Caption:* ${data.caption ? data.caption.slice(0, 200) : '-'}`
-        }, { quoted: m });
+        });
       } else {
-        await sock.sendMessage(jid, {
+        await sock.sendMessage(targetJid, {
           image: { url: item.url },
           caption: `📸 *Instagram Photo*\n📝 *Caption:* ${data.caption ? data.caption.slice(0, 200) : '-'}`
-        }, { quoted: m });
+        });
       }
-
-      await react(sock, m, '✅');
+      console.log('[Instagram] Sukses mengirim 1 media');
       return;
     }
 
-    // KASUS 2: Multiple Media / Carousel Album (Banyak foto / video)
-    await sock.sendMessage(jid, {
+    // Multiple Media (Carousel)
+    await sock.sendMessage(targetJid, {
       text: `📸 *Instagram Carousel Terdeteksi!* (${total} Media)\n\n_Sedang mengirim seluruh media langsung ke chat..._`
-    }, { quoted: m });
+    });
 
     for (let i = 0; i < total; i++) {
       const item = data.items[i];
       await delay(1200);
 
       if (item.type === 'video') {
-        await sock.sendMessage(jid, {
+        await sock.sendMessage(targetJid, {
           video: { url: item.url },
           caption: `🎬 Media [${i + 1}/${total}] (Video)`
         });
       } else {
-        await sock.sendMessage(jid, {
+        await sock.sendMessage(targetJid, {
           image: { url: item.url },
           caption: `📸 Foto [${i + 1}/${total}]`
         });
       }
     }
 
-    await react(sock, m, '✅');
+    console.log(`[Instagram] Sukses mengirim ${total} media carousel`);
   } catch (err) {
     console.error('[Instagram Error]:', err.message);
-    await react(sock, m, '❌');
-    await sock.sendMessage(jid, {
-      text: `❌ *Gagal mendownload Instagram:*\n${err.message}\n\nPastikan postingan/akun publik (tidak private).`
-    }, { quoted: m });
+    await sock.sendMessage(targetJid, {
+      text: `❌ *Gagal mendownload Instagram:*\n${err.message}`
+    });
   }
 }
 
 /**
  * Handler YouTube
  */
-async function handleYouTube(sock, jid, m, url) {
-  console.log(`[YouTube] Mendeteksi link: ${url}`);
-  await react(sock, m, '⏳');
-
+async function handleYouTube(sock, targetJid, url) {
+  console.log(`[YouTube] Mengunduh: ${url}`);
   try {
     const data = await downloadYouTube(url);
 
@@ -250,17 +229,16 @@ async function handleYouTube(sock, jid, m, url) {
       throw new Error('Link download video YouTube tidak ditemukan.');
     }
 
-    await sock.sendMessage(jid, {
+    await sock.sendMessage(targetJid, {
       video: { url: data.videoUrl },
       caption: `▶️ *YouTube Video*\n📌 *Judul:* ${data.title}\n⏱️ *Durasi:* ${data.duration || '-'}\n👤 *Channel:* ${data.author || '-'}`
-    }, { quoted: m });
+    });
 
-    await react(sock, m, '✅');
+    console.log('[YouTube] Sukses mengirim video');
   } catch (err) {
     console.error('[YouTube Error]:', err.message);
-    await react(sock, m, '❌');
-    await sock.sendMessage(jid, {
-      text: `❌ *Gagal mendownload YouTube:*\n${err.message}\n\nPastikan link valid dan durasi video tidak terlalu besar untuk WhatsApp.`
-    }, { quoted: m });
+    await sock.sendMessage(targetJid, {
+      text: `❌ *Gagal mendownload YouTube:*\n${err.message}`
+    });
   }
 }
