@@ -17,9 +17,14 @@ export async function handleMessage(sock, m) {
     if (!m.message) return;
 
     const jid = m.key.remoteJid;
+    if (!jid || jid === 'status@broadcast') return;
 
-    // Filter: Abaikan status broadcast dan pesan dari bot sendiri
-    if (jid === 'status@broadcast' || m.key.fromMe) return;
+    // Nomor akun bot yang sedang login
+    const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
+    const isSelf = jid === botJid;
+
+    // Abaikan jika pesan keluar ke orang lain (tetap proses jika kirim ke nomor sendiri / "Message Yourself")
+    if (m.key.fromMe && !isSelf) return;
 
     // Filter: Hanya terima di personal chat (bukan grup) sesuai permintaan user
     const isGroup = jid.endsWith('@g.us');
