@@ -21,6 +21,9 @@
   "author": "muhmdathalla",
   "license": "ISC",
   "dependencies": {
+    "@jerrycoder/instagram-api": "^2.5.9",
+    "@mrnima/instagram-downloader": "^1.0.0",
+    "@sasmeee/igdl": "^0.0.1-security",
     "@tobyg74/tiktok-api-dl": "^1.3.7",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "adm-zip": "^0.6.1",

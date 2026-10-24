@@ -1,17 +1,75 @@
-import axios from 'axios';
+import { instagram } from '@jerrycoder/instagram-api';
 import * as btch from 'btch-downloader';
 
 /**
  * Download Instagram Media (Single Photo, Carousel Multi-photo, Reels/Video)
  */
-export async function downloadInstagram(url) {
-  // Method 1: btch-downloader igdl
+export async function downloadInstagram(rawUrl) {
+  // Bersihkan query string parameter (misal: ?igsh=... atau ?mdxt=...)
+  const cleanUrl = rawUrl.split('?')[0];
+
+  // Method 1: @jerrycoder/instagram-api (Sangat stabil untuk Carousel Multi-photo & Reels)
   try {
-    const rawData = await btch.igdl(url);
+    const res = await instagram(cleanUrl).catch(() => instagram(rawUrl));
+    if (res) {
+      const items = [];
+
+      // Jika response berupa Object dengan properti media_url_1, media_url_2, dst.
+      if (typeof res === 'object' && !Array.isArray(res)) {
+        if (res.url) {
+          items.push({
+            type: res.url.includes('.mp4') || res.type === 'video' ? 'video' : 'image',
+            url: res.url
+          });
+        }
+
+        const totalMedia = res.total_media || 20;
+        for (let i = 1; i <= totalMedia; i++) {
+          const mUrl = res[`media_url_${i}`];
+          if (mUrl && !items.some(it => it.url === mUrl)) {
+            items.push({
+              type: mUrl.includes('.mp4') ? 'video' : 'image',
+              url: mUrl
+            });
+          }
+        }
+      } else if (Array.isArray(res) && res.length > 0) {
+        for (const item of res) {
+          const link = typeof item === 'string' ? item : (item.url || item.downloadUrl);
+          if (link && !items.some(it => it.url === link)) {
+            items.push({
+              type: link.includes('.mp4') || item.type === 'video' ? 'video' : 'image',
+              url: link
+            });
+          }
+        }
+      }
+
+      if (items.length > 0) {
+        const hasVideo = items.some(i => i.type === 'video');
+        const hasImage = items.some(i => i.type === 'image');
+        let overallType = 'image';
+        if (hasVideo && hasImage) overallType = 'mixed';
+        else if (hasVideo) overallType = 'video';
+        else overallType = 'images';
+
+        return {
+          type: overallType,
+          caption: 'Instagram Media',
+          items: items.slice(0, 20)
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[Instagram] jerrycoder API gagal, mencoba btch-downloader:', err.message);
+  }
+
+  // Method 2: btch-downloader igdl fallback
+  try {
+    const rawData = await btch.igdl(cleanUrl).catch(() => btch.igdl(rawUrl));
     const mediaList = Array.isArray(rawData) ? rawData : (rawData?.result || rawData?.data || (rawData?.url ? [rawData] : []));
 
     if (Array.isArray(mediaList) && mediaList.length > 0) {
-      // Deduplikasi item berdasarkan URL unik
       const seenUrls = new Set();
       const items = [];
 
@@ -28,7 +86,6 @@ export async function downloadInstagram(url) {
       }
 
       if (items.length > 0) {
-        // Batasi maksimal 20 item untuk keamanan kuota/memory
         const finalItems = items.slice(0, 20);
         const hasVideo = finalItems.some(i => i.type === 'video');
         const hasImage = finalItems.some(i => i.type === 'image');
@@ -45,44 +102,7 @@ export async function downloadInstagram(url) {
       }
     }
   } catch (err) {
-    console.warn('[Instagram] btch-downloader igdl gagal, mencoba fallback:', err.message);
-  }
-
-  // Method 2: Public SnapInsta / Siputzx API fallback
-  try {
-    const res = await axios.get(`https://api.siputzx.my.id/api/d/igdl?url=${encodeURIComponent(url)}`, {
-      timeout: 20000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      }
-    });
-
-    if (res.data && res.data.status && Array.isArray(res.data.data)) {
-      const seenUrls = new Set();
-      const items = [];
-
-      for (const item of res.data.data) {
-        const link = item.url || item.dl;
-        if (link && !seenUrls.has(link)) {
-          seenUrls.add(link);
-          const isVideo = link.includes('.mp4') || item.type === 'video';
-          items.push({
-            type: isVideo ? 'video' : 'image',
-            url: link
-          });
-        }
-      }
-
-      if (items.length > 0) {
-        return {
-          type: items.some(i => i.type === 'video') ? 'video' : 'images',
-          caption: 'Instagram Media',
-          items: items.slice(0, 20)
-        };
-      }
-    }
-  } catch (err) {
-    console.warn('[Instagram] Siputzx API fallback gagal:', err.message);
+    console.warn('[Instagram] btch-downloader igdl gagal:', err.message);
   }
 
   throw new Error('Gagal mengekstrak media dari link Instagram. Pastikan akun tidak diprivate.');
