@@ -1,4 +1,5 @@
 import axios from 'axios';
+import AdmZip from 'adm-zip';
 
 /**
  * Download URL into a Buffer
@@ -21,6 +22,35 @@ export async function getBuffer(url, options = {}) {
   } catch (err) {
     throw new Error(`Gagal mengunduh buffer media dari ${url}: ${err.message}`);
   }
+}
+
+/**
+ * Unduh banyak foto sekaligus dan bungkus menjadi file ZIP untuk 1-click download
+ */
+export async function createZipFromUrls(urls, prefix = 'foto') {
+  const zip = new AdmZip();
+
+  const downloads = urls.map(async (url, idx) => {
+    try {
+      const buffer = await getBuffer(url);
+      const ext = url.includes('.png') ? 'png' : (url.includes('.webp') ? 'webp' : 'jpg');
+      zip.addFile(`${prefix}_${idx + 1}.${ext}`, buffer);
+      return buffer;
+    } catch (err) {
+      console.warn(`Gagal mengunduh foto index ${idx}:`, err.message);
+      return null;
+    }
+  });
+
+  const buffers = await Promise.all(downloads);
+  const validBuffers = buffers.filter(Boolean);
+
+  if (validBuffers.length === 0) {
+    throw new Error('Gagal mengunduh foto untuk dikemas ke ZIP.');
+  }
+
+  const zipBuffer = zip.toBuffer();
+  return { zipBuffer, buffers: validBuffers };
 }
 
 /**
