@@ -1,7 +1,7 @@
 import { downloadTikTok } from './lib/tiktok.js';
 import { downloadInstagram } from './lib/instagram.js';
 import { downloadYouTube } from './lib/youtube.js';
-import { delay, extractUrls, createZipFromUrls } from './utils/helpers.js';
+import { delay, extractUrls, getBuffer } from './utils/helpers.js';
 import { config } from './config.js';
 
 // Regex link detectors
