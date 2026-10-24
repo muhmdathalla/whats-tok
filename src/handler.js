@@ -108,26 +108,22 @@ async function handleTikTok(sock, targetJid, url) {
           caption: `📸 *TikTok Photo*\n👤 *Creator:* ${data.author}\n📝 *Caption:* ${data.title || '-'}`
         });
       } else {
-        await sock.sendMessage(targetJid, {
-          text: `📸 *TikTok Slide Terdeteksi!* (${total} Foto)\n👤 *Creator:* ${data.author}\n📝 *Caption:* ${data.title || '-'}\n\n_Sedang menyiapkan paket download sekaligus..._`
-        });
+        // Unduh semua buffer foto secara bersamaan
+        const imageBuffers = await Promise.all(
+          data.images.map(imgUrl => getBuffer(imgUrl))
+        );
 
-        // 1. Kemas semua foto menjadi 1 file ZIP (Download Sekaligus 1-Click)
-        const { zipBuffer, buffers } = await createZipFromUrls(data.images, 'tiktok_slide');
-
-        await sock.sendMessage(targetJid, {
-          document: zipBuffer,
-          mimetype: 'application/zip',
-          fileName: `TikTok_Slide_${total}_Foto.zip`,
-          caption: `📦 *Paket Download Sekaligus (${total} Foto)*\n\n👉 *Pencet file ZIP di atas untuk langsung download semua foto sekaligus ke HP tanpa perlu klik satu per satu!*`
-        });
-
-        // 2. Kirim kumpulan foto secara berturut-turut tanpa teks per-foto agar WhatsApp otomatis menggabungkannya jadi Album Grid
-        for (let i = 0; i < buffers.length; i++) {
-          await sock.sendMessage(targetJid, {
-            image: buffers[i]
-          });
-        }
+        // Kirim semua foto secara serentak (Promise.all)
+        // Hanya foto pertama yang diberi caption, foto lainnya tanpa caption
+        // sehingga WhatsApp otomatis menyatukan semuanya menjadi SATU KOTAK ALBUM FOTO (Grid)!
+        await Promise.all(
+          imageBuffers.map((buf, idx) =>
+            sock.sendMessage(targetJid, {
+              image: buf,
+              caption: idx === 0 ? `📸 *TikTok Slide (${total} Foto)*\n👤 *Creator:* ${data.author}\n📝 *Caption:* ${data.title || '-'}` : undefined
+            })
+          )
+        );
       }
 
       // Kirim audio/musik jika ada
@@ -140,7 +136,7 @@ async function handleTikTok(sock, targetJid, url) {
         });
       }
 
-      console.log(`[TikTok] Sukses mengirim ${total} media (ZIP + Album Grid)`);
+      console.log(`[TikTok] Sukses mengirim ${total} foto sekaligus sebagai Album`);
       return;
     }
 
@@ -199,27 +195,21 @@ async function handleInstagram(sock, targetJid, url) {
     const imageUrls = data.items.filter(i => i.type === 'image').map(i => i.url);
     const videoItems = data.items.filter(i => i.type === 'video');
 
-    await sock.sendMessage(targetJid, {
-      text: `📸 *Instagram Carousel Terdeteksi!* (${total} Media)\n\n_Sedang menyiapkan paket download sekaligus..._`
-    });
-
-    // 1. Jika ada foto, kemas menjadi 1 file ZIP (Download Sekaligus 1-Click)
+    // Jika ada foto, kirim semua foto secara serentak (Promise.all)
+    // agar WhatsApp otomatis menggabungkannya jadi 1 kotak Album Foto di chat
     if (imageUrls.length > 0) {
-      const { zipBuffer, buffers } = await createZipFromUrls(imageUrls, 'instagram');
+      const imageBuffers = await Promise.all(
+        imageUrls.map(imgUrl => getBuffer(imgUrl))
+      );
 
-      await sock.sendMessage(targetJid, {
-        document: zipBuffer,
-        mimetype: 'application/zip',
-        fileName: `Instagram_Carousel_${imageUrls.length}_Foto.zip`,
-        caption: `📦 *Paket Download Sekaligus (${imageUrls.length} Foto)*\n\n👉 *Pencet file ZIP di atas untuk langsung download semua foto sekaligus ke HP tanpa perlu klik satu per satu!*`
-      });
-
-      // Kirim foto berurutan tanpa teks per-foto agar WhatsApp otomatis menggabungkannya jadi Album Grid
-      for (let i = 0; i < buffers.length; i++) {
-        await sock.sendMessage(targetJid, {
-          image: buffers[i]
-        });
-      }
+      await Promise.all(
+        imageBuffers.map((buf, idx) =>
+          sock.sendMessage(targetJid, {
+            image: buf,
+            caption: idx === 0 ? `📸 *Instagram Album (${imageUrls.length} Foto)*\n📝 *Caption:* ${data.caption ? data.caption.slice(0, 150) : '-'}` : undefined
+          })
+        )
+      );
     }
 
     // Jika ada video di dalam carousel
@@ -230,7 +220,7 @@ async function handleInstagram(sock, targetJid, url) {
       });
     }
 
-    console.log(`[Instagram] Sukses mengirim ${total} media carousel (ZIP + Album Grid)`);
+    console.log(`[Instagram] Sukses mengirim ${total} media carousel sekaligus sebagai Album`);
   } catch (err) {
     console.error('[Instagram Error]:', err.message);
     await sock.sendMessage(targetJid, {
